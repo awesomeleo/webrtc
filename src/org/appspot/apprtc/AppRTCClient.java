@@ -37,9 +37,17 @@ import org.json.JSONObject;
 import org.webrtc.MediaConstraints;
 import org.webrtc.PeerConnection;
 
+import io.socket.IOCallback;
+import io.socket.SocketIO;
+import io.socket.IOAcknowledge;
+import io.socket.SocketIOException;
+
+
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.LinkedList;
@@ -62,6 +70,7 @@ public class AppRTCClient {
   private final Activity activity;
   private final GAEChannelClient.MessageHandler gaeHandler;
   private final IceServersObserver iceServersObserver;
+  private SocketIO socket;
 
   // These members are only read/written under sendQueue's lock.
   private LinkedList<String> sendQueue = new LinkedList<String>();
@@ -96,15 +105,130 @@ public class AppRTCClient {
     }
     (new RoomParameterGetter()).execute(url);
   }
+  
+  public MediaConstraints constraintsFromJSON(String jsonString) {
+      if (jsonString == null) {
+        return null;
+      }
+      try {
+        MediaConstraints constraints = new MediaConstraints();
+        JSONObject json = new JSONObject(jsonString);
+        JSONObject mandatoryJSON = json.optJSONObject("mandatory");
+        if (mandatoryJSON != null) {
+          JSONArray mandatoryKeys = mandatoryJSON.names();
+          if (mandatoryKeys != null) {
+            for (int i = 0; i < mandatoryKeys.length(); ++i) {
+              String key = mandatoryKeys.getString(i);
+              String value = mandatoryJSON.getString(key);
+              constraints.mandatory.add(
+                  new MediaConstraints.KeyValuePair(key, value));
+            }
+          }
+        }
+        JSONArray optionalJSON = json.optJSONArray("optional");
+        if (optionalJSON != null) {
+          for (int i = 0; i < optionalJSON.length(); ++i) {
+            JSONObject keyValueDict = optionalJSON.getJSONObject(i);
+            String key = keyValueDict.names().getString(0);
+            String value = keyValueDict.getString(key);
+            constraints.optional.add(
+                new MediaConstraints.KeyValuePair(key, value));
+          }
+        }
+        return constraints;
+      } catch (JSONException e) {
+        throw new RuntimeException(e);
+      }
+    }
+
+  
+  public void connectToRoom2(String url) throws Exception{
+	  Log.e("begin","begin");
+	  socket = new SocketIO(url);
+      socket.connect(new IOCallback() {
+          @Override
+          public void onMessage(JSONObject json, IOAcknowledge ack) {
+              try {
+                  System.out.println("Server said:" + json.toString(2));
+              } catch (JSONException e) {
+                  e.printStackTrace();
+              }
+          }
+
+          @Override
+          public void onMessage(String data, IOAcknowledge ack) {
+              System.out.println("Server said: " + data);
+              Log.e("my", "on message:"+data);
+          }
+
+          @Override
+          public void onError(SocketIOException socketIOException) {
+              System.out.println("an Error occured");
+              socketIOException.printStackTrace();
+              gaeHandler.onError(1, socketIOException.toString());
+          }
+
+          @Override
+          public void onDisconnect() {
+              System.out.println("Connection terminated.");
+              gaeHandler.onClose();
+          }
+
+          @Override
+          public void onConnect() {
+              System.out.println("Connection established");
+              Log.e("my","Connection established");
+              socket.emit("create or join", "foo");
+              Log.e("my", "begin on open");
+              appRTCSignalingParameters = new AppRTCSignalingParameters();
+              appRTCSignalingParameters.initiator = false;
+              gaeHandler.onOpen();
+              Log.e("my", "complete on open");
+       
+            		  
+          }
+
+          @Override
+          public void on(String event, IOAcknowledge ack, Object... args) {
+              System.out.println("Server triggered event '" + event + "'");
+              Log.e("my","Server triggered event '" + event + "'");
+              if(event == "created"){
+            	  appRTCSignalingParameters.initiator = true;
+            	  return;
+              }
+              if(event == "full"){
+            	  return;
+              }
+              
+              if(event.equals("joined")  || event.equals("join")){
+            	  Log.e("my", "joined or join event fired");
+            	  appRTCSignalingParameters.pcConstraints = constraintsFromJSON("{'optional': []}");
+    			  appRTCSignalingParameters.videoConstraints = constraintsFromJSON("{'mandatory': {}, 'optional':[]}");
+				  appRTCSignalingParameters.iceServers = iceServersFromPCConfigJSON("{'iceServers': [{'url': 'stun:stun.l.google.com:19302'}]}");
+            	  Log.e("my", "ice server length is"+appRTCSignalingParameters.iceServers.size());
+				  iceServersObserver.onIceServers(appRTCSignalingParameters.iceServers);
+            	  Log.e("my","on ice server complete");
+            	  return;
+              }
+              
+              if(event.equals("message")){
+            	  Log.e("my", "message is "+args[0].toString());
+                  gaeHandler.onMessage(args[0].toString());
+              }
+                          
+          }
+      });
+  }
 
   /**
    * Disconnect from the GAE Channel.
    */
   public void disconnect() {
-    if (channelClient != null) {
-      channelClient.close();
-      channelClient = null;
-    }
+//    if (channelClient != null) {
+//      channelClient.close();
+//      channelClient = null;
+//    }
+	  socket.disconnect();
   }
 
   /**
@@ -113,10 +237,18 @@ public class AppRTCClient {
      eventually established).
    */
   public synchronized void sendMessage(String msg) {
-    synchronized (sendQueue) {
-      sendQueue.add(msg);
-    }
-    requestQueueDrainInBackground();
+//    synchronized (sendQueue) {
+//      sendQueue.add(msg);
+//    }
+//    requestQueueDrainInBackground();
+	  Log.e("my", "message began to send is:"+msg);
+	  try{
+		  socket.emit("message", new JSONObject(msg));
+
+	  }catch(Exception e){
+		  Log.e("my", "err occur"+e.toString());
+		  socket.emit("message", msg);
+	  }
   }
 
   public boolean isInitiator() {
@@ -133,13 +265,13 @@ public class AppRTCClient {
 
   // Struct holding the signaling parameters of an AppRTC room.
   private class AppRTCSignalingParameters {
-    public final List<PeerConnection.IceServer> iceServers;
-    public final String gaeBaseHref;
-    public final String channelToken;
-    public final String postMessageUrl;
-    public final boolean initiator;
-    public final MediaConstraints pcConstraints;
-    public final MediaConstraints videoConstraints;
+    public List<PeerConnection.IceServer> iceServers;
+    public String gaeBaseHref;
+    public String channelToken;
+    public String postMessageUrl;
+    public boolean initiator;
+    public MediaConstraints pcConstraints;
+    public MediaConstraints videoConstraints;
 
     public AppRTCSignalingParameters(
         List<PeerConnection.IceServer> iceServers,
@@ -154,6 +286,8 @@ public class AppRTCClient {
       this.pcConstraints = pcConstraints;
       this.videoConstraints = videoConstraints;
     }
+    
+    public AppRTCSignalingParameters(){}
   }
 
   // Load the given URL and return the value of the Location header of the
@@ -170,7 +304,6 @@ public class AppRTCClient {
         throw new RuntimeException(e);
       }
     }
-
     @Override
     protected void onPostExecute(String url) {
       connectToRoom(url);
@@ -301,7 +434,7 @@ public class AppRTCClient {
       }
     }
 
-    private MediaConstraints constraintsFromJSON(String jsonString) {
+    public MediaConstraints constraintsFromJSON(String jsonString) {
       if (jsonString == null) {
         return null;
       }

@@ -132,7 +132,7 @@ public class AppRTCDemoActivity extends Activity
 
   private void showGetRoomUI() {
     final EditText roomInput = new EditText(this);
-    roomInput.setText("https://apprtc.appspot.com/?r=");
+    roomInput.setText("http://192.168.1.82:2013");
     roomInput.setSelection(roomInput.getText().length());
     DialogInterface.OnClickListener listener =
         new DialogInterface.OnClickListener() {
@@ -150,7 +150,13 @@ public class AppRTCDemoActivity extends Activity
 
   private void connectToRoom(String roomUrl) {
     logAndToast("Connecting to room...");
-    appRtcClient.connectToRoom(roomUrl);
+    
+    try{
+        appRtcClient.connectToRoom2(roomUrl);
+    }catch(Exception e){
+    	
+    	e.printStackTrace();
+    }
   }
 
   @Override
@@ -190,49 +196,60 @@ public class AppRTCDemoActivity extends Activity
     pcConstraints.optional.add(
         new MediaConstraints.KeyValuePair("RtpDataChannels", "true"));
     pc = factory.createPeerConnection(iceServers, pcConstraints, pcObserver);
-
+    Log.e("my", "pc constraint pass");
     createDataChannelToRegressionTestBug2302(pc);  // See method comment.
-
+    Log.e("my", "pc constraint pass here");
     // Uncomment to get ALL WebRTC tracing and SENSITIVE libjingle logging.
     // NOTE: this _must_ happen while |factory| is alive!
     // Logging.enableTracing(
     //     "logcat:",
     //     EnumSet.of(Logging.TraceLevel.TRACE_ALL),
     //     Logging.Severity.LS_SENSITIVE);
+    
+
+//    {
+//      final PeerConnection finalPC = pc;
+//      final Runnable repeatedStatsLogger = new Runnable() {
+//          public void run() {
+//            synchronized (quit[0]) {
+//              if (quit[0]) {
+//                return;
+//              }
+//              final Runnable runnableThis = this;
+//              boolean success = finalPC.getStats(new StatsObserver() {
+//                  public void onComplete(StatsReport[] reports) {
+//                    for (StatsReport report : reports) {
+//                      Log.d(TAG, "Stats: " + report.toString());
+//                    }
+//                    vsv.postDelayed(runnableThis, 10000);
+//                  }
+//                }, null);
+//              if (!success) {
+//                throw new RuntimeException("getStats() return false!");
+//              }
+//            }
+//          }
+//        };
+//      //vsv.postDelayed(repeatedStatsLogger, 10000);
+//    }
+//    
+//    Log.e("my", "Creating local video source...");
 
     {
-      final PeerConnection finalPC = pc;
-      final Runnable repeatedStatsLogger = new Runnable() {
-          public void run() {
-            synchronized (quit[0]) {
-              if (quit[0]) {
-                return;
-              }
-              final Runnable runnableThis = this;
-              boolean success = finalPC.getStats(new StatsObserver() {
-                  public void onComplete(StatsReport[] reports) {
-                    for (StatsReport report : reports) {
-                      Log.d(TAG, "Stats: " + report.toString());
-                    }
-                    vsv.postDelayed(runnableThis, 10000);
-                  }
-                }, null);
-              if (!success) {
-                throw new RuntimeException("getStats() return false!");
-              }
-            }
-          }
-        };
-      vsv.postDelayed(repeatedStatsLogger, 10000);
-    }
+        Log.e("my", "enter block");
 
-    {
       logAndToast("Creating local video source...");
+      Log.e("my", "Creating local video source...");
+
       MediaStream lMS = factory.createLocalMediaStream("ARDAMS");
+      Log.e("my", "create local media stream pass");
       if (appRtcClient.videoConstraints() != null) {
         VideoCapturer capturer = getVideoCapturer();
+        Log.e("my", "here");
+
         videoSource = factory.createVideoSource(
             capturer, appRtcClient.videoConstraints());
+        Log.e("my", "video constraints pass");
         VideoTrack videoTrack =
             factory.createVideoTrack("ARDAMSv0", videoSource);
         videoTrack.addRenderer(new VideoRenderer(new VideoCallbacks(
@@ -242,6 +259,9 @@ public class AppRTCDemoActivity extends Activity
       lMS.addTrack(factory.createAudioTrack("ARDAMSa0"));
       pc.addStream(lMS, new MediaConstraints());
     }
+    Log.e("my", "all pass");
+    appRtcClient.sendMessage("got user media");
+    
     logAndToast("Waiting for ICE candidates...");
   }
 
@@ -257,6 +277,7 @@ public class AppRTCDemoActivity extends Activity
           String name = "Camera " + index + ", Facing " + facing +
               ", Orientation " + orientation;
           VideoCapturer capturer = VideoCapturer.create(name);
+          Log.e("my", "getVideoCapturer");
           if (capturer != null) {
             logAndToast("Using camera: " + name);
             return capturer;
@@ -282,12 +303,12 @@ public class AppRTCDemoActivity extends Activity
 
   // Log |msg| and Toast about it.
   private void logAndToast(String msg) {
-    Log.d(TAG, msg);
-    if (logToast != null) {
-      logToast.cancel();
-    }
-    logToast = Toast.makeText(this, msg, Toast.LENGTH_SHORT);
-    logToast.show();
+//    Log.d(TAG, msg);
+//    if (logToast != null) {
+//      logToast.cancel();
+//    }
+//    logToast = Toast.makeText(this, msg, Toast.LENGTH_SHORT);
+//    logToast.show();
   }
 
   // Send |json| to the underlying AppEngine Channel.
@@ -358,6 +379,7 @@ public class AppRTCDemoActivity extends Activity
     @Override public void onIceCandidate(final IceCandidate candidate){
       runOnUiThread(new Runnable() {
           public void run() {
+        	Log.e("my", "on ice candidate triggered!");
             JSONObject json = new JSONObject();
             jsonPut(json, "type", "candidate");
             jsonPut(json, "label", candidate.sdpMLineIndex);
@@ -496,11 +518,18 @@ public class AppRTCDemoActivity extends Activity
   // them appropriately.
   private class GAEHandler implements GAEChannelClient.MessageHandler {
     @JavascriptInterface public void onOpen() {
+    	Log.e("my", "in on open");
       if (!appRtcClient.isInitiator()) {
+    	  Log.e("my", "no initiator");
         return;
       }
+    	Log.e("my", "logandtoast");
+
       logAndToast("Creating offer...");
+  	Log.e("my", "in on open here");
+
       pc.createOffer(sdpObserver, sdpMediaConstraints);
+      Log.e("my","create offer complete");
     }
 
     @JavascriptInterface public void onMessage(String data) {
